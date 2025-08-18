@@ -25,7 +25,7 @@ class Hyperparameters:
     weight_decay: float = 0.0
     evals_per_epoch: int = 3
     
-    epochs: int = 1
+    epochs: int = 7
     seed: int = 1337
     num_titles: int = 100_000
     val_frac: float = 0.10
@@ -65,7 +65,7 @@ def configure_logging(log_file: str):
             
             if kwargs.get("prnt", True):
                 if "step" in kwargs and "max_steps" in kwargs:
-                    tqdm.write(f"[{kwargs.get('step'):>5}/{kwargs.get('max_steps')}] {event}: loss={kwargs.get('loss', 'N/A'):.6f} consistent_loss={kwargs.get('consistent_loss', 'N/A'):.6f} time={kwargs.get('elapsed_time', 0):.2f}s")
+                    tqdm.write(f"[{kwargs.get('step'):>5}/{kwargs.get('max_steps')}] {event}: loss={kwargs.get('loss', 'N/A'):.6f} time={kwargs.get('elapsed_time', 0):.2f}s")
                 else:
                     parts = [f"{k}={v}" for k, v in kwargs.items() if k not in ["prnt", "timestamp"]]
                     if parts:
@@ -99,89 +99,6 @@ def iter_full_split(split_ids: torch.Tensor, block_size: int, batch_size: int, d
         x = batch[:-1].view(batch_size, block_size).to(device)
         y = batch[1:].view(batch_size, block_size).to(device)
         yield x, y
-
-def evaluate_consistent_coverage(val_ids: torch.Tensor, model: nn.Module, block_size: int, device: torch.device):
-    """
-    Evaluation function with consistent token coverage regardless of batch_size.
-    
-    This function addresses the issue where the original evaluate() function
-    produces different results based on batch_size due to variable validation coverage.
-    
-    Args:
-        val_ids: Validation token tensor
-        model: Model to evaluate
-        block_size: Sequence length for evaluation
-        device: Device to run evaluation on
-        
-    Returns:
-        Per-token average loss (consistent across different batch configurations)
-    """
-    model.eval()
-    total_loss = 0.0
-    total_tokens = 0
-    
-    # Use fixed window size regardless of batch_size
-    window_size = block_size
-    stride = block_size  # Non-overlapping windows
-    
-    with torch.no_grad():
-        # Process all validation data with consistent windowing
-        for start_idx in range(0, len(val_ids) - window_size, stride):
-            end_idx = start_idx + window_size
-            window = val_ids[start_idx:end_idx + 1]  # +1 for target shift
-            
-            # Create single-sequence batch for consistency
-            x = window[:-1].unsqueeze(0).to(device)  # [1, window_size]
-            y = window[1:].unsqueeze(0).to(device)   # [1, window_size]
-            
-            logits, _ = model(x)
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), 
-                                 y.view(-1), reduction='sum')
-            
-            total_loss += loss.item()
-            total_tokens += window_size
-    
-    model.train()
-    return total_loss / total_tokens if total_tokens > 0 else 0.0
-
-def log_evaluation_comparison(model, val_ids, val_text, args, device):
-    """
-    Log both original and consistent evaluation methods for comparison.
-    This helps demonstrate the coverage inconsistency issue.
-    """
-    # Original evaluation (coverage depends on batch_size)
-    def evaluate_original():
-        model.eval()
-        losses = 0.0
-        with torch.no_grad():
-            for xb, yb in iter_full_split(val_ids, args.block_size, args.batch_size, device):
-                logits, _ = model(xb, yb)
-                B, T, V = logits.size()
-                loss = F.cross_entropy(logits.view(-1, V), yb.view(-1), reduction='sum')
-                losses += loss.item()
-        model.train()
-        return losses / len(val_text)
-    
-    # Calculate both metrics
-    original_loss = evaluate_original()
-    consistent_loss = evaluate_consistent_coverage(val_ids, model, args.block_size, device)
-    
-    # Calculate coverage info
-    span = args.block_size * args.batch_size + 1
-    eval_windows = max(1, (len(val_ids) - span) // span + 1) if len(val_ids) >= span else 0
-    eval_tokens = eval_windows * args.block_size * args.batch_size
-    coverage_ratio = eval_tokens / len(val_ids)
-    
-    print(f"\n--- Evaluation Coverage Analysis ---")
-    print(f"Original eval (char-normalized): {original_loss:.6f}")
-    print(f"Consistent eval (token-normalized): {consistent_loss:.6f}")
-    print(f"Evaluation windows: {eval_windows}")
-    print(f"Tokens evaluated: {eval_tokens:,} / {len(val_ids):,}")
-    print(f"Coverage ratio: {coverage_ratio:.3f}")
-    print(f"Batch size effect: {'HIGH' if eval_windows <= 2 else 'MODERATE'}")
-    print("---------------------------------------\n")
-    
-    return original_loss, consistent_loss
 
 def train_tokenizer(titles: list[str], vocab_size: int, unk_token: str = "<unk>", pad_token: str = "<pad>", eos_token: str = "<eos>") -> Tokenizer:
     tokenizer = Tokenizer(models.BPE(unk_token=unk_token))
@@ -300,6 +217,56 @@ class GPT(nn.Module):
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), reduction='mean')
         return logits, loss
 
+# EVALUATION FIX: Create evaluation function factory to provide both original and fixed evaluation
+def create_evaluation_functions(model, val_ids, val_text, args, device):
+    """
+    Create both original and fixed evaluation functions.
+    
+    ISSUE: Original evaluate() has inconsistent coverage based on batch_size.
+    Different batch_size values evaluate different numbers of tokens but divide by same denominator,
+    making results incomparable across different model configurations.
+    
+    FIX: evaluate_token_average() provides consistent per-token loss regardless of batch_size.
+    """
+    
+    def evaluate_char_normalized():
+        """
+        ORIGINAL evaluation function - character normalized (potentially inconsistent coverage).
+        Kept for backward compatibility and assessment comparison.
+        """
+        model.eval()
+        losses = 0.0
+        with torch.no_grad():
+            for xb, yb in iter_full_split(val_ids, args.block_size, args.batch_size, device):
+                logits, _ = model(xb, yb)
+                B, T, V = logits.size()
+                loss = F.cross_entropy(logits.view(-1, V), yb.view(-1), reduction='sum')
+                losses += loss.item()
+        model.train()
+        return losses / len(val_text)
+
+    def evaluate_token_average():
+        """
+        FIXED evaluation function - consistent per-token loss.
+        Provides fair comparison regardless of batch_size by normalizing by actual tokens evaluated.
+        """
+        model.eval()
+        sum_nll = 0.0      # Sum of negative log-likelihoods
+        total_tokens = 0   # Total number of tokens evaluated
+        
+        with torch.no_grad():
+            for xb, yb in iter_full_split(val_ids, args.block_size, args.batch_size, device):
+                logits, _ = model(xb, yb)
+                B, T, V = logits.size()
+                loss = F.cross_entropy(logits.view(-1, V), yb.view(-1), reduction='sum')
+                sum_nll += loss.item()
+                total_tokens += yb.numel()  # Count actual tokens in this batch
+        
+        model.train()
+        return sum_nll / max(1, total_tokens)  # Per-token loss (avoid division by zero)
+    
+    return evaluate_char_normalized, evaluate_token_average
+
 def main():
     args = Hyperparameters()
     torch.manual_seed(args.seed)
@@ -348,27 +315,15 @@ def main():
     opt = torch.optim.SGD(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max_steps)
 
-    # Original evaluate function (unchanged for compatibility)
-    def evaluate():
-        model.eval()
-        losses = 0.0
-        with torch.no_grad():
-            for xb, yb in iter_full_split(val_ids, args.block_size, args.batch_size, device):
-                logits, _ = model(xb, yb)
-                B, T, V = logits.size()
-                loss = F.cross_entropy(logits.view(-1, V), yb.view(-1), reduction='sum')
-                losses += loss.item()
-        model.train()
-        return losses / len(val_text)
+    # EVALUATION FIX: Create both evaluation functions
+    evaluate_char, evaluate_token = create_evaluation_functions(model, val_ids, val_text, args, device)
+    
+    # For backward compatibility, keep original function name
+    evaluate = evaluate_char
 
     ptr = 0
     step = 0
     t0 = time.time()
-    
-    # Log initial evaluation comparison
-    print("Initial evaluation comparison:")
-    log_evaluation_comparison(model, val_ids, val_text, args, device)
-    
     for epoch in range(1, args.epochs + 1):
         for _ in tqdm(range(1, batches + 1), desc=f"Epoch {epoch}/{args.epochs}"):
             step += 1
@@ -389,21 +344,24 @@ def main():
                       prnt=False)
 
             if step == 1 or step % eval_interval == 0 or step == max_steps:
-                val_loss = evaluate()  # Uses original function for compatibility
+                # EVALUATION FIX: Log both evaluation methods for comparison
+                val_loss_char = evaluate_char()    # Original (char-normalized)
+                val_loss_token = evaluate_token()  # Fixed (token-normalized)
                 
-                # Also log consistent evaluation for comparison
-                consistent_loss = evaluate_consistent_coverage(val_ids, model, args.block_size, device)
-                
+                # Log original method for backward compatibility
                 logger.log("validation_step",
                           step=step,
                           max_steps=max_steps,
-                          loss=val_loss,
-                          consistent_loss=consistent_loss,
+                          loss=val_loss_char,
                           elapsed_time=elapsed)
-    
-    # Final evaluation comparison
-    print("\nFinal evaluation comparison:")
-    log_evaluation_comparison(model, val_ids, val_text, args, device)
+                
+                # Log fixed method for fair comparison
+                logger.log("validation_step_token_normalized",
+                          step=step,
+                          max_steps=max_steps,
+                          loss=val_loss_token,
+                          char_normalized_loss=val_loss_char,
+                          elapsed_time=elapsed)
 
 if __name__ == "__main__":
     try:
