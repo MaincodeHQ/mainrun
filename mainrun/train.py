@@ -25,7 +25,7 @@ class Hyperparameters:
     weight_decay: float = 0.0
     evals_per_epoch: int = 3
     
-    epochs: int = 7
+    epochs: int = 1
     seed: int = 1337
     num_titles: int = 100_000
     val_frac: float = 0.10
@@ -65,7 +65,7 @@ def configure_logging(log_file: str):
             
             if kwargs.get("prnt", True):
                 if "step" in kwargs and "max_steps" in kwargs:
-                    tqdm.write(f"[{kwargs.get('step'):>5}/{kwargs.get('max_steps')}] {event}: loss={kwargs.get('loss', 'N/A'):.6f} time={kwargs.get('elapsed_time', 0):.2f}s")
+                    tqdm.write(f"[{kwargs.get('step'):>5}/{kwargs.get('max_steps')}] {event}: loss={kwargs.get('loss', 'N/A'):.6f} consistent_loss={kwargs.get('consistent_loss', 'N/A'):.6f} time={kwargs.get('elapsed_time', 0):.2f}s")
                 else:
                     parts = [f"{k}={v}" for k, v in kwargs.items() if k not in ["prnt", "timestamp"]]
                     if parts:
@@ -170,7 +170,7 @@ def log_evaluation_comparison(model, val_ids, val_text, args, device):
     span = args.block_size * args.batch_size + 1
     eval_windows = max(1, (len(val_ids) - span) // span + 1) if len(val_ids) >= span else 0
     eval_tokens = eval_windows * args.block_size * args.batch_size
-    coverage_ratio = eval_tokens / len(val_text)
+    coverage_ratio = eval_tokens / len(val_ids)
     
     print(f"\n--- Evaluation Coverage Analysis ---")
     print(f"Original eval (char-normalized): {original_loss:.6f}")
