@@ -14,11 +14,11 @@ import structlog
 
 @dataclass
 class Hyperparameters:
-    block_size: int = 384
-    batch_size: int = 80
+    block_size: int = 512
+    batch_size: int = 120
     vocab_size: int = 16_000
-    n_layer: int = 6
-    n_head: int = 8
+    n_layer: int = 2
+    n_head: int = 2
     d_model: int = 512
     dropout: float = 0.1
     lr: float = 6e-3
