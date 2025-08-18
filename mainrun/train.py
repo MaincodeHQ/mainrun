@@ -25,7 +25,7 @@ class Hyperparameters:
     weight_decay: float = 0.0
     evals_per_epoch: int = 3
     
-    epochs: int = 7
+    epochs: int = 1
     seed: int = 1337
     num_titles: int = 100_000
     val_frac: float = 0.10
@@ -65,7 +65,7 @@ def configure_logging(log_file: str):
             
             if kwargs.get("prnt", True):
                 if "step" in kwargs and "max_steps" in kwargs:
-                    tqdm.write(f"[{kwargs.get('step'):>5}/{kwargs.get('max_steps')}] {event}: loss={kwargs.get('loss', 'N/A'):.6f} time={kwargs.get('elapsed_time', 0):.2f}s")
+                    tqdm.write(f"[{kwargs.get('step'):>5}/{kwargs.get('max_steps')}] {event}: loss_per_char={kwargs.get('loss', 'N/A'):.6f} loss_per_token={kwargs.get('token_normalized_loss', 'N/A'):.6f} time={kwargs.get('elapsed_time', 0):.2f}s")
                 else:
                     parts = [f"{k}={v}" for k, v in kwargs.items() if k not in ["prnt", "timestamp"]]
                     if parts:
@@ -353,14 +353,7 @@ def main():
                           step=step,
                           max_steps=max_steps,
                           loss=val_loss_char,
-                          elapsed_time=elapsed)
-                
-                # Log fixed method for fair comparison
-                logger.log("validation_step_token_normalized",
-                          step=step,
-                          max_steps=max_steps,
-                          loss=val_loss_token,
-                          char_normalized_loss=val_loss_char,
+                          token_normalized_loss=val_loss_token,
                           elapsed_time=elapsed)
 
 if __name__ == "__main__":
