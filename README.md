@@ -49,6 +49,36 @@ cat mainrun/logs/baseline.log
 # 5. Start optimizing!
 ```
 
+## Optional
+
+### CUDA-Enabled Dev Container
+
+If you have access to an NVIDIA GPU, you can use the CUDA dev container at `.devcontainer/cuda/` for hardware-accelerated training. It is built on an official NVIDIA CUDA image and launches with `--gpus all` so the container has full access to the host's GPUs.
+
+#### Prerequisites
+
+- A host with an NVIDIA GPU and a recent driver (CUDA 12.6+ compatible).
+- [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) installed on the host. Without it, the container will fail to start.
+- Docker Desktop on macOS does **not** support GPU passthrough. Run on a Linux host (local or remote via VS Code's Remote-SSH) for GPU access.
+
+#### Launching
+
+When reopening in the Dev Container, select the **Mainrun (CUDA)** option from the menu.
+
+#### Verifying GPU access
+
+Once inside the container, run:
+
+```bash
+nvidia-smi
+```
+
+If it prints your GPU, you're set. `task train` will pick it up automatically.
+
+#### Customising
+
+The CUDA dev container uses NVIDIA's minimal `base` image, which is enough to run the stock PyTorch wheel against your host GPU. If you want to do something fancier (compile CUDA extensions from source, use system cuDNN, build custom kernels, etc.), edit `.devcontainer/cuda/Dockerfile` and swap the base image for a heavier variant (`runtime`, `devel`, or one of the `cudnn` flavours).
+
 ## Key Commands
 You will only need two main commands for this assessment:
 

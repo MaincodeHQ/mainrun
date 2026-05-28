@@ -1,0 +1,6 @@
+datasets==4.0.0
+matplotlib==3.10.3
+structlog==24.4.0
+tokenizers==0.21.2
+torch==2.7.1
+tqdm==4.67.1

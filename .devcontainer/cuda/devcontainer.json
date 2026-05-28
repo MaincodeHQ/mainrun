@@ -1,0 +1,12 @@
+{
+	"name": "Mainrun (CUDA)",
+	"build": {
+		"dockerfile": "Dockerfile",
+		"context": "."
+	},
+	"runArgs": ["--gpus", "all"],
+	"hostRequirements": {
+		"gpu": true
+	},
+	"remoteUser": "root"
+}
