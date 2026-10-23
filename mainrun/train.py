@@ -1,4 +1,10 @@
 import utils
+from batching import (
+    batch_span,
+    batches_per_epoch,
+    next_batch_ptr,
+    require_enough_tokens,
+)
 import math, random, time
 from dataclasses import dataclass
 import json
@@ -84,16 +90,16 @@ def get_titles(num_titles: int, seed: int, val_frac: float) -> str:
     return titles[:n], titles[n:]
 
 def get_batch(split_ids: torch.Tensor, ptr: int, block_size: int, batch_size: int, device: torch.device):
-    span = block_size * batch_size + 1
-    if ptr + span >= len(split_ids):
-        ptr = 0
+    require_enough_tokens(len(split_ids), block_size, batch_size)
+    span = batch_span(block_size, batch_size)
+    ptr = next_batch_ptr(ptr, len(split_ids), block_size, batch_size)
     batch = split_ids[ptr: ptr + span]
     x = batch[:-1].view(batch_size, block_size).to(device)
     y = batch[1:].view(batch_size, block_size).to(device)
     return x, y, ptr + block_size * batch_size
 
 def iter_full_split(split_ids: torch.Tensor, block_size: int, batch_size: int, device: torch.device):
-    span = block_size * batch_size + 1
+    span = batch_span(block_size, batch_size)
     for ptr in range(0, len(split_ids) - span + 1, span):
         batch = split_ids[ptr: ptr + span]
         x = batch[:-1].view(batch_size, block_size).to(device)
@@ -240,7 +246,8 @@ def main():
     train_ids = torch.tensor(tok.encode(train_text), dtype=torch.long)
     val_ids = torch.tensor(tok.encode(val_text), dtype=torch.long)
     
-    batches = len(train_ids) // (args.block_size * args.batch_size)
+    require_enough_tokens(len(train_ids), args.block_size, args.batch_size)
+    batches = batches_per_epoch(len(train_ids), args.block_size, args.batch_size)
     max_steps = args.epochs * batches
     eval_interval = batches // args.evals_per_epoch
     logger.log("dataset_info",
